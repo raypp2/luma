@@ -1,6 +1,6 @@
 # Luma LED Pendant
 
-<u>Overview</u> &nbsp;&nbsp;&nbsp;|&nbsp;&nbsp;&nbsp; [🧭 Code](./documentation/code.md) &nbsp;&nbsp;&nbsp;|&nbsp;&nbsp;&nbsp; [🛠️ 3D Model](./documentation/3dmodel.md) &nbsp;&nbsp;&nbsp;|&nbsp;&nbsp;&nbsp; [🔮 Roadmap](./documentation/roadmap.md)
+<u>Overview</u> &nbsp;&nbsp;&nbsp;|&nbsp;&nbsp;&nbsp; [🧭 Laser Cutting](./documentation/laser.md) &nbsp;&nbsp;&nbsp;|&nbsp;&nbsp;&nbsp; [🛠️ 3D Printing](./documentation/3dmodel.md) &nbsp;&nbsp;&nbsp;|&nbsp;&nbsp;&nbsp; [🔮 Roadmap](./documentation/roadmap.md)
 
 *This is a short description*
 
