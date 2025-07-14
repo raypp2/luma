@@ -6,6 +6,10 @@ logs
 .env
 
 # Config files
+c_cpp_properties.json
+luma.code-workspace
+launch.json
+platformio.ini
 
 # Folder for notes not for sharing
 private
