@@ -16,5 +16,12 @@ _OLD/*
 
 # OS Files
 .DS_Store
+.DS_Store?
+**/.DS_Store
 .vscode/*
 .pio
+._*
+.Spotlight-V100
+.Trashes
+ehthumbs.db
+Thumbs.db
