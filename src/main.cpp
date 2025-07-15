@@ -69,6 +69,7 @@ void sinelonDualEffect();
 void bpm();
 void bpmFlood();
 void outerComet();
+void outerCycle();
 
 // Inner patterns
 void innerBlOnRd();
@@ -78,6 +79,7 @@ void innerCrossfadeRedWhite();
 void innerCrossfadeOrangeCyan();
 void innerCrossfadeMagentaTurquoise();
 void innerCrossfadeGoldPink();
+void innerCycle();
 
 
 /*
@@ -88,7 +90,8 @@ void innerCrossfadeGoldPink();
 typedef void (*PatternList[])();
 
 // add new patterns here
-PatternList outerPatternList = { 
+PatternList outerPatternList = {
+  outerCycle,
   wispyRainbow,
   daylight,  
   berlinMode, 
@@ -103,6 +106,7 @@ PatternList outerPatternList = {
 
 // add new patterns here
 PatternList innerPatternList = { 
+  innerCycle,                     // outerCycle
   innerCrossfadePalette,          // wispyRainbow
   innerCrossfadePalette,          // daylight
   innerCrossfadeRedWhite,         // berlin mode
@@ -436,6 +440,26 @@ void outerComet() {
   }
 }
 
+void outerCycle() {
+  PatternList outerPatternListCycle = { 
+    wispyRainbow, daylight, berlinMode, cyanMode, magentaMode,
+    wmTiamat, wmYelmag, sinelonDualEffect, bpm, bpmFlood
+  };
+  static uint8_t current = 0;
+  static unsigned long lastChangeTime = 0;
+
+  // Call the current pattern
+  outerPatternListCycle[current]();
+
+  // Every 10 seconds, advance to the next pattern
+  unsigned long now = millis();
+  if (now - lastChangeTime >= 10000) {
+    lastChangeTime = now;
+    current = (current + 1) % ARRAY_SIZE(outerPatternListCycle);
+    FastLED.clear();  // Optional: wipe leftover LEDs when switching
+  }
+}
+
 /* 
  --- Inner LED Patterns ---
 */
@@ -608,6 +632,34 @@ void innerCrossfadeGoldPink() {
   innerCrossfadeTwoColorCore(CRGB::Gold, CRGB::DeepPink);
 }
 
+void innerCycle() {
+  PatternList innerPatternListCycle = { 
+    innerCrossfadePalette,          // wispyRainbow
+    innerCrossfadePalette,          // daylight
+    innerCrossfadeRedWhite,         // berlin mode
+    innerCrossfadeOrangeCyan,       // cyanMode
+    innerCrossfadeMagentaTurquoise, // magentaMode
+    innerCrossfadeGoldPink,         // CHANGE
+    innerCrossfadePalette,          // CHANGE
+    innerCrossfadeRedWhite,         // CHANGE
+    innerCrossfadeGoldPink,         // CHANGE
+    innerCrossfadeGoldPink          // CHANGE
+  };
+  static uint8_t current = 0;
+  static unsigned long lastChangeTime = 0;
+
+  // Call the current pattern
+  innerPatternListCycle[current]();
+
+  // Every 10 seconds, advance to the next pattern
+  unsigned long now = millis();
+  if (now - lastChangeTime >= 10000) {
+    lastChangeTime = now;
+    current = (current + 1) % ARRAY_SIZE(innerPatternListCycle);
+    FastLED.clear();  // Optional: wipe leftover LEDs when switching
+  }
+}
+
 /* END PATTERNS */
 
 void outerPatternAdvance() {
@@ -643,6 +695,7 @@ void loop() {
     innerPatternAdvance();
     FastLED.clear(); 
   }
+
   if ( button_2.fell() ) {
     patternBrightnessAdvance(); 
     FastLED.clear();
