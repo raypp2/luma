@@ -17,12 +17,11 @@
 #define AMINATION_FPS 120
 #define EEPROM_ADDR_OUTER 0
 #define EEPROM_ADDR_INNER 1
+#define EEPROM_ADDR_BRIGHTNESS 2
 #define ARRAY_SIZE(A) (sizeof(A) / sizeof((A)[0]))
 
 // Global brightness macros
-#define BRIGHTNESS_OUTER 15
-#define BRIGHTNESS_INNER_FRONT 20
-#define BRIGHTNESS_INNER_BACK 25
+#define BRIGHTNESS_CYCLE_LEN 5
 
 // LED Segments - Use to simplify control of outer/acrylic front/back
 CRGB leds_raw[NUM_LEDS];
@@ -37,11 +36,23 @@ Bounce button_2 = Bounce();
 
 uint8_t outerCurrentPattern = 0; // Index number of which pattern is current
 uint8_t innerCurrentPattern = 0; // Index number of which pattern is current
+uint8_t outerHuePosition = 0;    // Rotating "base color" used by many of the patterns
+uint8_t innerHuePosition = 0;    // Rotating "base color" used by many of the patterns
+int outerLEDPosition = 0;        // Marker for point-based animations
 
-uint8_t outerHuePosition = 0;    // rotating "base color" used by many of the patterns
-uint8_t innerHuePosition = 0;    // rotating "base color" used by many of the patterns
+// Patter brightness specific global variables
+uint8_t brightnessLevelIndex = 0;     // Used to iterate through the button 2 brightness level presses
 
-int outerLEDPosition = 0;        // marker for point-based animations
+const uint8_t BRIGHTNESS_LEVELS_OUTER[BRIGHTNESS_CYCLE_LEN] = {30, 60, 90, 0, 0};
+const uint8_t BRIGHTNESS_LEVELS_OUTER_PULSE_HEAD[BRIGHTNESS_CYCLE_LEN] = {80, 160, 240, 0, 0};
+const uint8_t BRIGHTNESS_LEVELS_INNER_FRONT[BRIGHTNESS_CYCLE_LEN] = {30, 60, 90, 90, 0};
+const uint8_t BRIGHTNESS_LEVELS_INNER_BACK[BRIGHTNESS_CYCLE_LEN] = {30, 60, 90, 90, 0};
+
+uint8_t BRIGHTNESS_OUTER = 30;        // Sets the "Low" brightness level for the outer leds
+uint8_t BRIGHTNESS_OUTER_PULSE_HEAD = 80; // Sets the "Low" brightness level for the pulse heads 
+uint8_t BRIGHTNESS_INNER_FRONT = 30;  // Sets the "Low" brightness level for the inner front leds
+uint8_t BRIGHTNESS_INNER_BACK = 30;   // Sets the "Low" brightness level for the inner back leds
+
 
 
 // Need to forward declarations for the patterns here -- update with new patterns
@@ -185,10 +196,18 @@ void setup() {
   // Read saved pattern indices
   outerCurrentPattern = EEPROM.read(EEPROM_ADDR_OUTER);
   innerCurrentPattern = EEPROM.read(EEPROM_ADDR_INNER);
+  brightnessLevelIndex = EEPROM.read(EEPROM_ADDR_BRIGHTNESS);
 
   // Safety bounds check
   if (outerCurrentPattern >= ARRAY_SIZE(outerPatternList)) outerCurrentPattern = 0;
   if (innerCurrentPattern >= ARRAY_SIZE(innerPatternList)) innerCurrentPattern = 0;
+  // The last Index is both outer and inner off - we don't want to save this but rather reset
+  if (brightnessLevelIndex >= BRIGHTNESS_CYCLE_LEN - 1) brightnessLevelIndex = 0;
+
+  BRIGHTNESS_OUTER = BRIGHTNESS_LEVELS_OUTER[brightnessLevelIndex];
+  BRIGHTNESS_OUTER_PULSE_HEAD = BRIGHTNESS_LEVELS_OUTER_PULSE_HEAD[brightnessLevelIndex];
+  BRIGHTNESS_INNER_FRONT = BRIGHTNESS_LEVELS_INNER_FRONT[brightnessLevelIndex];
+  BRIGHTNESS_INNER_BACK = BRIGHTNESS_LEVELS_INNER_BACK[brightnessLevelIndex];
 }
 
 // This is not used here - but we need to add it in order to support FastLED requirements
@@ -226,16 +245,15 @@ void outerRainbow() {
 }
 
 #define PULSE_DECAY 0.99f // Fade by % each step
-uint8_t pulseHeadBrightness = 255; // brightness for this pattern
 // Generic Dual Sine Pulse Pattern
 void dualSinePulsePattern(uint8_t red, uint8_t green, uint8_t blue) {
   // set outer_led to have a blue
   fill_solid(leds_outer, leds_outer.len, CRGB(red,green,blue));
   // set the head
-  leds_outer[outerLEDPosition] = CRGB(red, green, blue) * pulseHeadBrightness;
+  leds_outer[outerLEDPosition] = CRGB(red, green, blue) * BRIGHTNESS_OUTER_PULSE_HEAD;
   // set the opposing head
   int oppositePos = (outerLEDPosition + leds_outer.len / 2) % leds_outer.len;
-  leds_outer[oppositePos] = CRGB(red, green, blue) * pulseHeadBrightness;
+  leds_outer[oppositePos] = CRGB(red, green, blue) * BRIGHTNESS_OUTER_PULSE_HEAD;
   // move the head 
   EVERY_N_MILLISECONDS(150) { outerLEDPosition = (outerLEDPosition + 1) % leds_outer.len; }
   // dim the tail
@@ -248,6 +266,7 @@ void dualSinePulsePattern(uint8_t red, uint8_t green, uint8_t blue) {
   }
 }
 
+// Custom fill_rainbow method that allows modification of the sat and brightness ("val") values
 void fill_rainbow(struct CRGB *targetArray, int numToFill, uint8_t initialhue,
                   uint8_t deltahue, uint8_t sat, uint8_t val) {
     CHSV hsv;
@@ -272,11 +291,11 @@ void wispyRainbow() {
   EVERY_N_MILLISECONDS( 20 ) { outerHuePosition++; }
 
   // set the head
-  leds_outer[outerLEDPosition] = leds_outer[outerLEDPosition] * pulseHeadBrightness;
+  leds_outer[outerLEDPosition] = leds_outer[outerLEDPosition] * BRIGHTNESS_OUTER_PULSE_HEAD;
 
   // set the opposing head
   int oppositePos = (outerLEDPosition + leds_outer.len / 2) % leds_outer.len;
-  leds_outer[oppositePos] = leds_outer[oppositePos] * pulseHeadBrightness;
+  leds_outer[oppositePos] = leds_outer[oppositePos] * BRIGHTNESS_OUTER_PULSE_HEAD;
 
    // move the head with dynamic movement speed using a sine wave
   static uint16_t lastMoveTime = 0;
@@ -320,8 +339,8 @@ void magentaMode() {
 // then pause, then backwards.
 // Adapted from WLED: https://github.com/wled/WLED/blob/main/wled00/FX.cpp#L4478
 void washingMachineEffect(CRGBPalette16 palette) {
-  static uint8_t wmSpeed = 8;        // Lower is slower
-  static uint8_t wmIntensity = 200;  // Brightness peak (0–255)
+  static uint8_t wmSpeed = 8;                     // Lower is slower
+  static uint8_t wmIntensity = BRIGHTNESS_OUTER;  // Brightness peak (0–255)
   static CRGBPalette16 wmPalette = palette;
 
   // Position moves back and forth like a washer drum oscillating
@@ -605,6 +624,14 @@ void innerPatternAdvance() {
 
 void patternBrightnessAdvance() {
   // advance the brightness cycle
+  brightnessLevelIndex = (brightnessLevelIndex + 1) % BRIGHTNESS_CYCLE_LEN;
+
+  BRIGHTNESS_OUTER = BRIGHTNESS_LEVELS_OUTER[brightnessLevelIndex];
+  BRIGHTNESS_OUTER_PULSE_HEAD = BRIGHTNESS_LEVELS_OUTER_PULSE_HEAD[brightnessLevelIndex];
+  BRIGHTNESS_INNER_FRONT = BRIGHTNESS_LEVELS_INNER_FRONT[brightnessLevelIndex];
+  BRIGHTNESS_INNER_BACK = BRIGHTNESS_LEVELS_INNER_BACK[brightnessLevelIndex];
+
+  EEPROM.update(EEPROM_ADDR_BRIGHTNESS, brightnessLevelIndex); //save to EEPROM
 }
 
 void loop() {
@@ -612,12 +639,13 @@ void loop() {
   button_2.update();
 
   if ( button_1.fell() ) {
-    FastLED.clear(); 
     outerPatternAdvance();
-    innerPatternAdvance(); 
+    innerPatternAdvance();
+    FastLED.clear(); 
   }
-  if ( button_2.fell() ) { 
+  if ( button_2.fell() ) {
     patternBrightnessAdvance(); 
+    FastLED.clear();
   }
 
   outerPatternList[outerCurrentPattern]();
