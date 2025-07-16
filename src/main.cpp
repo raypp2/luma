@@ -1,10 +1,220 @@
 /*
+
  MegaTinyCore => ATtiny1616 @ 16MHz (internal)
+
 */
 
 #include <Arduino.h>
-#include <Bounce2.h>
+#include <Bounce2.h> 
 #include <FastLED.h> // re: below, see https://github.com/FastLED/FastLED/issues/1754
+#include <EEPROM.h>
+
+// Hardware specific macros
+#define BTN_1_PIN 3 // megaTinyCore # for PA7
+#define BTN_2_PIN 8 // megaTinyCore # for PB1
+#define DATA_PIN 1 // megaTinyCore # for PA5
+#define NUM_LEDS 20
+#define AMINATION_FPS 120
+#define EEPROM_ADDR_OUTER 0
+#define EEPROM_ADDR_INNER 1
+#define EEPROM_ADDR_BRIGHTNESS 2
+#define ARRAY_SIZE(A) (sizeof(A) / sizeof((A)[0]))
+
+// Global brightness macros
+#define BRIGHTNESS_CYCLE_LEN 5
+
+// LED Segments - Use to simplify control of outer/acrylic front/back
+CRGB leds_raw[NUM_LEDS];
+CRGBSet leds(leds_raw, NUM_LEDS);
+CRGBSet leds_outer(leds(0, 15)); 
+CRGBSet leds_inner_front(leds(16, 17)); 
+CRGBSet leds_inner_back(leds(18, 19));
+
+// Pattern specific global variables
+Bounce button_1 = Bounce(); 
+Bounce button_2 = Bounce();
+
+uint8_t outerCurrentPattern = 0; // Index number of which pattern is current
+uint8_t innerCurrentPattern = 0; // Index number of which pattern is current
+uint8_t outerHuePosition = 0;    // Rotating "base color" used by many of the patterns
+uint8_t innerHuePosition = 0;    // Rotating "base color" used by many of the patterns
+int outerLEDPosition = 0;        // Marker for point-based animations
+
+// Patter brightness specific global variables
+uint8_t brightnessLevelIndex = 0;     // Used to iterate through the button 2 brightness level presses
+
+const uint8_t BRIGHTNESS_LEVELS_OUTER[BRIGHTNESS_CYCLE_LEN] = {30, 60, 90, 0, 0};
+const uint8_t BRIGHTNESS_LEVELS_OUTER_PULSE_HEAD[BRIGHTNESS_CYCLE_LEN] = {80, 160, 240, 0, 0};
+const uint8_t BRIGHTNESS_LEVELS_INNER_FRONT[BRIGHTNESS_CYCLE_LEN] = {30, 60, 90, 90, 0};
+const uint8_t BRIGHTNESS_LEVELS_INNER_BACK[BRIGHTNESS_CYCLE_LEN] = {30, 60, 90, 90, 0};
+
+uint8_t BRIGHTNESS_OUTER = 30;        // Sets the "Low" brightness level for the outer leds
+uint8_t BRIGHTNESS_OUTER_PULSE_HEAD = 80; // Sets the "Low" brightness level for the pulse heads 
+uint8_t BRIGHTNESS_INNER_FRONT = 30;  // Sets the "Low" brightness level for the inner front leds
+uint8_t BRIGHTNESS_INNER_BACK = 30;   // Sets the "Low" brightness level for the inner back leds
+
+
+
+// Need to forward declarations for the patterns here -- update with new patterns
+// Outer patterns
+void outerRainbow();
+void wispyRainbow();
+void berlinMode();
+void cyanMode();
+void magentaMode();
+void daylight();
+void wmTiamat();
+void wmYelmag();
+void sinelonDualEffect();
+void bpm();
+void bpmFlood();
+void outerComet();
+void outerCycle();
+
+// Inner patterns
+void innerBlOnRd();
+void innerDiametricFade();
+void innerCrossfadePalette();
+void innerCrossfadeRedWhite();
+void innerCrossfadeOrangeCyan();
+void innerCrossfadeMagentaTurquoise();
+void innerCrossfadeGoldPink();
+void innerCycle();
+
+
+/*
+ * List of patterns to cycle through on button press.  Each is defined as a separate function below.
+ * The outer patterns and the inner patters will be 1-to-1.
+ */
+
+typedef void (*PatternList[])();
+
+// add new patterns here
+PatternList outerPatternList = {
+  outerCycle,
+  wispyRainbow,
+  daylight,  
+  berlinMode, 
+  cyanMode, 
+  magentaMode, 
+  wmTiamat, 
+  wmYelmag, 
+  sinelonDualEffect, 
+  bpm, 
+  bpmFlood
+}; 
+
+// add new patterns here
+PatternList innerPatternList = { 
+  innerCycle,                     // outerCycle
+  innerCrossfadePalette,          // wispyRainbow
+  innerCrossfadePalette,          // daylight
+  innerCrossfadeRedWhite,         // berlin mode
+  innerCrossfadeOrangeCyan,       // cyanMode
+  innerCrossfadeMagentaTurquoise, // magentaMode
+  innerCrossfadeGoldPink,         // CHANGE
+  innerCrossfadePalette,          // CHANGE
+  innerCrossfadeRedWhite,         // CHANGE
+  innerCrossfadeGoldPink,         // CHANGE
+  innerCrossfadeGoldPink          // CHANGE
+}; 
+
+/* 
+ ---  Custom Palette Definitions ---
+*/
+
+// rainbow for use inouterRainbow(), heavily tweaked to ok on the tomorrowland pendant outer ring
+DEFINE_GRADIENT_PALETTE(rainbowLoopAgroGamma) {
+      0, 255,   0,   0,   // Red 
+     21, 255,  60,   0,   // Red-Orange 
+     42, 220, 128,   0,   // Yellow 
+     63,  80, 255,   0,   // Yellow-Green 
+     85,   0, 255,   0,   // Green 
+    106,   0, 255, 128,   // Green-Cyan
+    127,   0, 220, 255,   // Cyan 
+    148,   0,  80, 255,   // Cyan-Blue
+    169,   0,   0, 255,   // Blue 
+    190,  20,   0, 255,   // Blue-Violet
+    211, 128,   0, 120,   // Magenta 
+    232, 255,   0,  20,   // Magenta-Red
+    255, 255,   0,   0    // Red (back to zero)
+};
+
+CRGBPalette16 myRainbowPalette = rainbowLoopAgroGamma;
+
+// Tiamat palette adapted from WLED
+// A bright meteor with blue, teal and magenta hues
+DEFINE_GRADIENT_PALETTE(tiamatAgroGamma) {
+    0,   1,  2, 14,   // Very dark navy (nearly black-blue)
+   33,   2,  5, 35,   // Midnight blue
+  100,  13,135, 92,   // Teal green (deep jade)
+  120,  43,255,193,   // Bright aqua mint
+  140, 247,  7,249,   // Neon pink-violet
+  160, 193, 17,208,   // Electric purple
+  180,  39,255,154,   // Bright seafoam green
+  200,   4,213,236,   // Electric cyan (vivid)
+  220,  39,252,135,   // Bright spring green
+  240, 193,213,253,   // Light periwinkle / icy blue
+  255, 255,249,255    // Near white with pink tint (pastel)
+};
+
+CRGBPalette16 tiamatPalette = tiamatAgroGamma;
+
+// Yelmag-inspired palette (warm yellows with magenta and red)
+DEFINE_GRADIENT_PALETTE(yelmagAgroGamma) {
+    0,   0,   0,   0, // Black
+   42, 113,   0,   0, // Dark Red / Maroon
+   84, 255,   0,   0, // Pure Red
+  127, 255,   0, 117, // Hot Pink / Red-Magenta mix
+  170, 255,   0, 255, // Magenta
+  212, 255, 128, 117, // Light Red-Orange / Coral
+  255, 255, 255,   0  // Yellow
+};
+
+CRGBPalette16 yelmagPalette = yelmagAgroGamma;
+
+// Sherbet palette from WLED (soft pinks, oranges, and whites)
+DEFINE_GRADIENT_PALETTE(rainbowSherbetAgroGamma) {
+    0,   255, 102,  41,   // dark orange
+   43,   255, 140,  90,   // peach
+   86,   255,  51,  90,   // hot pink
+  127,   255, 153, 169,   // soft pink
+  170,   255, 255, 249,   // off-white
+  209,   113, 255,  85,   // green-lime
+  255,   157, 255, 137    // mint-lime
+};
+
+CRGBPalette16 sherbetPalette = rainbowSherbetAgroGamma;
+
+void setup() {
+  FastLED.addLeds<WS2812,DATA_PIN,GRB>(leds, NUM_LEDS);
+
+  pinMode(BTN_1_PIN,INPUT_PULLUP);
+  button_1.attach(BTN_1_PIN);
+  button_1.interval(100); // interval in ms
+  
+  pinMode(BTN_2_PIN,INPUT_PULLUP);
+  button_2.attach(BTN_2_PIN);
+  button_2.interval(100); // interval in ms
+
+  // Read saved pattern indices
+  outerCurrentPattern = EEPROM.read(EEPROM_ADDR_OUTER);
+  innerCurrentPattern = EEPROM.read(EEPROM_ADDR_INNER);
+  brightnessLevelIndex = EEPROM.read(EEPROM_ADDR_BRIGHTNESS);
+
+  // Safety bounds check
+  if (outerCurrentPattern >= ARRAY_SIZE(outerPatternList)) outerCurrentPattern = 0;
+  if (innerCurrentPattern >= ARRAY_SIZE(innerPatternList)) innerCurrentPattern = 0;
+  // The last Index is both outer and inner off - we don't want to save this but rather reset
+  if (brightnessLevelIndex >= BRIGHTNESS_CYCLE_LEN - 1) brightnessLevelIndex = 0;
+
+  BRIGHTNESS_OUTER = BRIGHTNESS_LEVELS_OUTER[brightnessLevelIndex];
+  BRIGHTNESS_OUTER_PULSE_HEAD = BRIGHTNESS_LEVELS_OUTER_PULSE_HEAD[brightnessLevelIndex];
+  BRIGHTNESS_INNER_FRONT = BRIGHTNESS_LEVELS_INNER_FRONT[brightnessLevelIndex];
+  BRIGHTNESS_INNER_BACK = BRIGHTNESS_LEVELS_INNER_BACK[brightnessLevelIndex];
+}
+
+// This is not used here - but we need to add it in order to support FastLED requirements
 volatile unsigned long timer_millis = 0;
 void update_millis() {
     static unsigned long last_micros = 0;
@@ -13,39 +223,6 @@ void update_millis() {
         timer_millis++;
         last_micros = current_micros;
     }
-}
-
-#define BTN_1_PIN 3 // megaTinyCore # for PA7
-#define BTN_2_PIN 8 // megaTinyCore # for PB1
-#define DATA_PIN 1 // megaTinyCore # for PA5
-#define NUM_LEDS 20
-#define BRIGHTNESS_OUTER 30
-#define BRIGHTNESS_INNER_FRONT 150
-#define BRIGHTNESS_INNER_BACK 150
-#define ANIMATION_FPS 120
-
-#define ARRAY_SIZE(A) (sizeof(A) / sizeof((A)[0]))
-
-// Use segments to simplify control of outer/acrylic front/back
-CRGB leds_raw[NUM_LEDS];
-CRGBSet leds(leds_raw, NUM_LEDS);
-CRGBSet leds_outer(leds(0, 15));
-CRGBSet leds_inner_front(leds(16, 17));
-CRGBSet leds_inner_back(leds(18, 19));
-
-Bounce button_1 = Bounce();
-Bounce button_2 = Bounce();
-
-void setup() {
-  FastLED.addLeds<WS2812,DATA_PIN,GRB>(leds, NUM_LEDS);
-
-  pinMode(BTN_1_PIN,INPUT_PULLUP);
-  button_1.attach(BTN_1_PIN);
-  button_1.interval(100); // interval in ms
-
-  pinMode(BTN_2_PIN,INPUT_PULLUP);
-  button_2.attach(BTN_2_PIN);
-  button_2.interval(100); // interval in ms
 }
 
 // native SetBrightness() does not accept a CRGBSet
@@ -57,58 +234,32 @@ void setSegBrightness(CRGBSet& segment, uint8_t brightness) {
   }
 }
 
-/*
- Patterns
- */
-uint8_t outterCurrentPattern = 0; // Index number of which pattern is current
-uint8_t outterHuePosition = 0; // rotating "base color" used by many of the patterns
-int outterLEDPosition = 0; // marker for point-based animations
-uint8_t innerCurrentPattern = 0; // Index number of which pattern is current
-uint8_t innerHuePosition = 0; // rotating "base color" used by many of the patterns
-
-// rainbow for use inouterRainbow(), heavily tweaked to ok on the tomorrowland pendant outer ring
-DEFINE_GRADIENT_PALETTE(rainbowLoopAgroGamma) {
-      0, 255,   0,   0,   // Red
-     21, 255,  60,   0,   // Red-Orange
-     42, 220, 128,   0,   // Yellow
-     63,  80, 255,   0,   // Yellow-Green
-     85,   0, 255,   0,   // Green
-    106,   0, 255, 128,   // Green-Cyan
-    127,   0, 220, 255,   // Cyan
-    148,   0,  80, 255,   // Cyan-Blue
-    169,   0,   0, 255,   // Blue
-    190,  20,   0, 255,   // Blue-Violet
-    211, 128,   0, 120,   // Magenta
-    232, 255,   0,  20,   // Magenta-Red
-    255, 255,   0,   0    // Red (back to zero)
-};
-
-CRGBPalette16 myRainbowPalette = rainbowLoopAgroGamma;
+/* 
+ --- Outer LED Patterns ---
+*/
 
 // Rainbow around the perimeter
 void outerRainbow() {
-  //fill_rainbow( leds_outer, leds_outer.len, outterHuePosition, 16 ); // I did not like this rainbow
   for (int i = 0; i < leds_outer.len; i++) {
-    uint8_t colorIndex = (outterHuePosition + (i * (256 / leds_outer.len))) % 256;
+    uint8_t colorIndex = (outerHuePosition + (i * (256 / leds_outer.len))) % 256;
     leds_outer[i] = ColorFromPalette(myRainbowPalette, colorIndex, 110, LINEARBLEND);
   }
   setSegBrightness(leds_outer, BRIGHTNESS_OUTER);
-  EVERY_N_MILLISECONDS( 20 ) { outterHuePosition++; }
+  EVERY_N_MILLISECONDS( 20 ) { outerHuePosition++; } 
 }
 
-#define PULSE_DECAY 0.35f // Fade by % each step
-uint8_t pulseHeadBrightness = BRIGHTNESS_OUTER + 40; // brightness for this pattern
-// Blue around the perimeter
-void outerBluePulse() {
+#define PULSE_DECAY 0.99f // Fade by % each step
+// Generic Dual Sine Pulse Pattern
+void dualSinePulsePattern(uint8_t red, uint8_t green, uint8_t blue) {
   // set outer_led to have a blue
-  fill_solid(leds_outer, leds_outer.len, CRGB(0,0,1));
+  fill_solid(leds_outer, leds_outer.len, CRGB(red,green,blue));
   // set the head
-  leds_outer[outterLEDPosition] = CRGB(0, 0, pulseHeadBrightness);
+  leds_outer[outerLEDPosition] = CRGB(red, green, blue) * BRIGHTNESS_OUTER_PULSE_HEAD;
   // set the opposing head
-  int oppositePos = (outterLEDPosition + leds_outer.len / 2) % leds_outer.len;
-  leds_outer[oppositePos] = CRGB(0, 0, pulseHeadBrightness);
-  // move the head
-  EVERY_N_MILLISECONDS(150) { outterLEDPosition = (outterLEDPosition + 1) % leds_outer.len; }
+  int oppositePos = (outerLEDPosition + leds_outer.len / 2) % leds_outer.len;
+  leds_outer[oppositePos] = CRGB(red, green, blue) * BRIGHTNESS_OUTER_PULSE_HEAD;
+  // move the head 
+  EVERY_N_MILLISECONDS(150) { outerLEDPosition = (outerLEDPosition + 1) % leds_outer.len; }
   // dim the tail
   EVERY_N_MILLISECONDS(50) {
     for (int i = 0; i < leds_outer.len; i++) {
@@ -119,17 +270,49 @@ void outerBluePulse() {
   }
 }
 
-// Purple around the perimeter
-void outerPurplePulse() {
-  // set outer_led to have a blue
-  fill_solid(leds_outer, leds_outer.len, CRGB(1,0,1));
+// Custom fill_rainbow method that allows modification of the sat and brightness ("val") values
+void fill_rainbow(struct CRGB *targetArray, int numToFill, uint8_t initialhue,
+                  uint8_t deltahue, uint8_t sat, uint8_t val) {
+    CHSV hsv;
+    hsv.hue = initialhue; //which color
+    hsv.sat = sat; //saturation from grey to full color
+    hsv.val = val; //how "bright"
+    for (int i = 0; i < numToFill; ++i) {
+        targetArray[i] = hsv;
+        hsv.hue += deltahue;
+    }
+}
+
+// Wispy Dynamic Rainbow Spin Pattern
+void wispyRainbow() {
+  // set outer_led to have a rainbow pattern
+  //fill_rainbow(leds_outer, leds_outer.len, 0, 360/leds_outer.len, 240, 100);
+  for (int i = 0; i < leds_outer.len; i++) {
+    uint8_t colorIndex = (outerHuePosition + (i * (256 / leds_outer.len))) % 256;
+    leds_outer[i] = ColorFromPalette(myRainbowPalette, colorIndex, 110, LINEARBLEND);
+  }
+  setSegBrightness(leds_outer, BRIGHTNESS_OUTER);
+  EVERY_N_MILLISECONDS( 20 ) { outerHuePosition++; }
+
   // set the head
-  leds_outer[outterLEDPosition] = CRGB(pulseHeadBrightness, 0, pulseHeadBrightness);
+  leds_outer[outerLEDPosition] = leds_outer[outerLEDPosition] * BRIGHTNESS_OUTER_PULSE_HEAD;
+
   // set the opposing head
-  int oppositePos = (outterLEDPosition + leds_outer.len / 2) % leds_outer.len;
-  leds_outer[oppositePos] = CRGB(pulseHeadBrightness, 0, pulseHeadBrightness);
-  // move the head
-  EVERY_N_MILLISECONDS(150) { outterLEDPosition = (outterLEDPosition + 1) % leds_outer.len; }
+  int oppositePos = (outerLEDPosition + leds_outer.len / 2) % leds_outer.len;
+  leds_outer[oppositePos] = leds_outer[oppositePos] * BRIGHTNESS_OUTER_PULSE_HEAD;
+
+   // move the head with dynamic movement speed using a sine wave
+  static uint16_t lastMoveTime = 0;
+  uint16_t now = millis();
+
+  // Speed oscillates between 30ms and 150ms per move at ~0.25Hz (i.e., ~4s full cycle)
+  uint16_t dynamicSpeed = beatsin16(15, 30, 150); 
+
+  if (now - lastMoveTime > dynamicSpeed) {
+    outerLEDPosition = (outerLEDPosition + 1) % leds_outer.len;
+    lastMoveTime = now;
+  }
+
   // dim the tail
   EVERY_N_MILLISECONDS(50) {
     for (int i = 0; i < leds_outer.len; i++) {
@@ -137,22 +320,103 @@ void outerPurplePulse() {
       leds_outer[i].g = (uint8_t)(leds_outer[i].g * PULSE_DECAY);
       leds_outer[i].b = (uint8_t)(leds_outer[i].b * PULSE_DECAY);
     }
+  }
+}
+
+void daylight() {
+  dualSinePulsePattern(10, 10, 10);
+}
+
+void berlinMode() {
+  dualSinePulsePattern(10, 0, 0);
+}
+
+void cyanMode() {
+  dualSinePulsePattern(0, 10, 10);
+}
+
+void magentaMode() {
+  dualSinePulsePattern(10, 0, 10);
+}
+
+// Imitates a washing machine, rotating same waves forward,
+// then pause, then backwards.
+// Adapted from WLED: https://github.com/wled/WLED/blob/main/wled00/FX.cpp#L4478
+void washingMachineEffect(CRGBPalette16 palette) {
+  static uint8_t wmSpeed = 8;                     // Lower is slower
+  static uint8_t wmIntensity = BRIGHTNESS_OUTER;  // Brightness peak (0–255)
+  static CRGBPalette16 wmPalette = palette;
+
+  // Position moves back and forth like a washer drum oscillating
+  uint16_t pos = beatsin16(wmSpeed, 0, leds_outer.len - 1);
+  // Brightness pulsing
+  uint8_t bri = beatsin8(wmSpeed * 2, wmIntensity / 4, wmIntensity);
+
+  // Fade existing frame for trailing effect
+  fadeToBlackBy(leds_outer, leds_outer.len, 20);
+
+  // Main color from palette
+  CRGB c = ColorFromPalette(wmPalette, (uint8_t)(pos * (255 / leds_outer.len)), bri);
+
+  // Light up the head
+  leds_outer[pos] = c;
+
+  // Light up the opposing head (180 degrees apart)
+  uint16_t pos2 = (pos + leds_outer.len / 2) % leds_outer.len;
+  leds_outer[pos2] = c;
+}
+
+void wmTiamat() {
+  washingMachineEffect(tiamatPalette);
+}
+
+void wmYelmag() {
+  washingMachineEffect(yelmagPalette);
+}
+
+// Dual Sinelon effect for leds_outer
+void sinelonDualEffect() {
+  // Static state variables
+  static uint8_t beatA = 10;        // speed of first comet
+  static uint8_t beatB = 7;         // speed of second comet
+  static uint8_t indexA = 0;        // Color index A
+  static uint8_t indexB = 127;      // Color index B
+
+  // Fade existing frame by a small amount for trails
+  fadeToBlackBy(leds_outer, leds_outer.len, 20);
+
+  // Calculate positions using sinewave / ping-pong motion
+  uint16_t posA = beatsin16(beatA, 0, leds_outer.len - 1);
+  uint16_t posB = beatsin16(beatB, 0, leds_outer.len - 1);
+
+  // Colors from Sherbet palette
+  for (int i = 0; i < leds_outer.len; i++) {
+    uint8_t colorIndexA = (indexA + (i * (256 / leds_outer.len))) % 256;
+    uint8_t colorIndexB = (indexB + (i * (256 / leds_outer.len))) % 256;
+    leds_outer[posA] = ColorFromPalette(sherbetPalette, colorIndexA, 110, LINEARBLEND);
+    leds_outer[posB] = ColorFromPalette(sherbetPalette, colorIndexB, 110, LINEARBLEND);
+  }
+
+  // Advance palette indices slowly
+  EVERY_N_MILLISECONDS(20) {
+    indexA += 1;
+    indexB += 1;
   }
 }
 
 // colored stripes pulsing at a defined Beats-Per-Minute (BPM)
 void bpm() {
-  uint8_t BeatsPerMinute = 62;
+  uint8_t BeatsPerMinute = 32;
   uint8_t beat = beatsin8(BeatsPerMinute, 64, 255);
   for (int i = 0; i < leds_outer.len; i++) {
-    uint8_t colorIndex = (outterHuePosition + (i * (256 / leds_outer.len))) % 256;
+    uint8_t colorIndex = (outerHuePosition + (i * (256 / leds_outer.len))) % 256;
     leds_outer[i] = ColorFromPalette(myRainbowPalette, colorIndex, beat-1+(i*10), LINEARBLEND);
   }
 }
 
 // All outer leds pulsing at a defined Beats-Per-Minute (BPM)
 void bpmFlood() {
-  uint8_t BeatsPerMinute = 62;
+  uint8_t BeatsPerMinute = 32;
   uint8_t beat = beatsin8(BeatsPerMinute, 64, 255);
   CRGB color = ColorFromPalette(myRainbowPalette, beat, 150);
   fill_solid(leds_outer, leds_outer.len, color);
@@ -163,9 +427,9 @@ void bpmFlood() {
 uint8_t headLuma = BRIGHTNESS_OUTER - 5; // brightness for this pattern (white needs to be dimmed from BRIGHTNESS_OUTER)
 void outerComet() {
   // set the head
-  leds_outer[outterLEDPosition] = CRGB(headLuma, headLuma, headLuma);
-  // move the head
-  EVERY_N_MILLISECONDS(150) { outterLEDPosition = (outterLEDPosition + 1) % leds_outer.len; }
+  leds_outer[outerLEDPosition] = CRGB(headLuma, headLuma, headLuma);
+  // move the head 
+  EVERY_N_MILLISECONDS(150) { outerLEDPosition = (outerLEDPosition + 1) % leds_outer.len; }
   // dim the tail
   EVERY_N_MILLISECONDS(50) {
     for (int i = 0; i < leds_outer.len; i++) {
@@ -176,19 +440,43 @@ void outerComet() {
   }
 }
 
+void outerCycle() {
+  PatternList outerPatternListCycle = { 
+    wispyRainbow, daylight, berlinMode, cyanMode, magentaMode,
+    wmTiamat, wmYelmag, sinelonDualEffect, bpm, bpmFlood
+  };
+  static uint8_t current = 0;
+  static unsigned long lastChangeTime = 0;
+
+  // Call the current pattern
+  outerPatternListCycle[current]();
+
+  // Every 10 seconds, advance to the next pattern
+  unsigned long now = millis();
+  if (now - lastChangeTime >= 10000) {
+    lastChangeTime = now;
+    current = (current + 1) % ARRAY_SIZE(outerPatternListCycle);
+    FastLED.clear();  // Optional: wipe leftover LEDs when switching
+  }
+}
+
+/* 
+ --- Inner LED Patterns ---
+*/
+
 // Blue over Red as seen on the rendering
 void innerBlOnRd() {
   fill_solid(leds_inner_front, leds_inner_front.len, CRGB(0, 0, BRIGHTNESS_INNER_FRONT));
   fill_solid(leds_inner_back, leds_inner_back.len, CRGB(BRIGHTNESS_INNER_BACK, 0, 0));
 }
 
-// Rainbow fade where F/R stay 180deg out of phase
+// Rainbow fade where F/R stay 180deg out of phase 
 void innerDiametricFade() {
   fill_solid(leds_inner_front, leds_inner_front.len, CHSV(innerHuePosition, 255, 255));
   fill_solid(leds_inner_back, leds_inner_back.len, CHSV(innerHuePosition-127, 255, 255));
   setSegBrightness(leds_inner_front, BRIGHTNESS_INNER_FRONT);
   setSegBrightness(leds_inner_back, BRIGHTNESS_INNER_BACK);
-  EVERY_N_MILLISECONDS( 100 ) { innerHuePosition++; }
+  EVERY_N_MILLISECONDS( 100 ) { innerHuePosition++; } 
 }
 
 void innerCrossfadePalette() {
@@ -329,37 +617,73 @@ void innerCrossfadeRedWhite() {
   innerCrossfadeTwoColorCore(CRGB::Red, CRGB::White);
 }
 
+// --- WRAPPER for Orange/Cyan crossfade animation ---
+void innerCrossfadeOrangeCyan() {
+  innerCrossfadeTwoColorCore(CRGB::Orange, CRGB::Cyan);
+}
+
+// --- WRAPPER for Magenta/Turquoise crossfade animation ---
+void innerCrossfadeMagentaTurquoise() {
+  innerCrossfadeTwoColorCore(CRGB::Magenta, CRGB::Turquoise);
+}
+
 // --- WRAPPER for Gold/Pink crossfade animation ---
 void innerCrossfadeGoldPink() {
   innerCrossfadeTwoColorCore(CRGB::Gold, CRGB::DeepPink);
 }
 
+void innerCycle() {
+  PatternList innerPatternListCycle = { 
+    innerCrossfadePalette,          // wispyRainbow
+    innerCrossfadePalette,          // daylight
+    innerCrossfadeRedWhite,         // berlin mode
+    innerCrossfadeOrangeCyan,       // cyanMode
+    innerCrossfadeMagentaTurquoise, // magentaMode
+    innerCrossfadeGoldPink,         // CHANGE
+    innerCrossfadePalette,          // CHANGE
+    innerCrossfadeRedWhite,         // CHANGE
+    innerCrossfadeGoldPink,         // CHANGE
+    innerCrossfadeGoldPink          // CHANGE
+  };
+  static uint8_t current = 0;
+  static unsigned long lastChangeTime = 0;
+
+  // Call the current pattern
+  innerPatternListCycle[current]();
+
+  // Every 10 seconds, advance to the next pattern
+  unsigned long now = millis();
+  if (now - lastChangeTime >= 10000) {
+    lastChangeTime = now;
+    current = (current + 1) % ARRAY_SIZE(innerPatternListCycle);
+    FastLED.clear();  // Optional: wipe leftover LEDs when switching
+  }
+}
+
 /* END PATTERNS */
 
-/*
- List of patterns to cycle through on button press.  Each is defined as a separate function below.
- */
-typedef void (*PatternList[])();
-// add new patterns here
-PatternList outerPatternList = {
-  outerRainbow, bpm, bpmFlood, outerBluePulse, outerPurplePulse, outerComet
-};
-
-PatternList innerPatternList = {
-  innerCrossfadeRedWhite,
-  innerCrossfadeGoldPink,
-  innerCrossfadePalette,
-  innerBlOnRd,
-  innerDiametricFade
-};
 void outerPatternAdvance() {
   // add one to the current pattern number, and wrap around at the end
-  outterCurrentPattern = (outterCurrentPattern + 1) % ARRAY_SIZE( outerPatternList );
+  outerCurrentPattern = (outerCurrentPattern + 1) % ARRAY_SIZE( outerPatternList );
+  EEPROM.update(EEPROM_ADDR_OUTER, outerCurrentPattern); // save to EEPROM
 }
 
 void innerPatternAdvance() {
   // add one to the current pattern number, and wrap around at the end
   innerCurrentPattern = (innerCurrentPattern + 1) % ARRAY_SIZE( innerPatternList );
+  EEPROM.update(EEPROM_ADDR_INNER, innerCurrentPattern); // save to EEPROM
+}
+
+void patternBrightnessAdvance() {
+  // advance the brightness cycle
+  brightnessLevelIndex = (brightnessLevelIndex + 1) % BRIGHTNESS_CYCLE_LEN;
+
+  BRIGHTNESS_OUTER = BRIGHTNESS_LEVELS_OUTER[brightnessLevelIndex];
+  BRIGHTNESS_OUTER_PULSE_HEAD = BRIGHTNESS_LEVELS_OUTER_PULSE_HEAD[brightnessLevelIndex];
+  BRIGHTNESS_INNER_FRONT = BRIGHTNESS_LEVELS_INNER_FRONT[brightnessLevelIndex];
+  BRIGHTNESS_INNER_BACK = BRIGHTNESS_LEVELS_INNER_BACK[brightnessLevelIndex];
+
+  EEPROM.update(EEPROM_ADDR_BRIGHTNESS, brightnessLevelIndex); //save to EEPROM
 }
 
 void loop() {
@@ -367,14 +691,19 @@ void loop() {
   button_2.update();
 
   if ( button_1.fell() ) {
-    FastLED.clear();
     outerPatternAdvance();
+    innerPatternAdvance();
+    FastLED.clear(); 
   }
-  if ( button_2.fell() ) { innerPatternAdvance(); }
 
-  outerPatternList[outterCurrentPattern]();
+  if ( button_2.fell() ) {
+    patternBrightnessAdvance(); 
+    FastLED.clear();
+  }
+
+  outerPatternList[outerCurrentPattern]();
   innerPatternList[innerCurrentPattern]();
 
-  FastLED.show();
-  FastLED.delay(1000/ANIMATION_FPS);
+  FastLED.show();  
+  FastLED.delay(1000/AMINATION_FPS); 
 }
