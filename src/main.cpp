@@ -45,10 +45,10 @@ uint8_t brightnessLevelIndex = 0;     // Used to iterate through the button 2 br
 
 const uint8_t BRIGHTNESS_LEVELS_OUTER[BRIGHTNESS_CYCLE_LEN] = {30, 60, 90, 0, 0};
 const uint8_t BRIGHTNESS_LEVELS_OUTER_PULSE_HEAD[BRIGHTNESS_CYCLE_LEN] = {80, 160, 240, 0, 0};
-const uint8_t BRIGHTNESS_LEVELS_INNER_FRONT[BRIGHTNESS_CYCLE_LEN] = {30, 60, 90, 90, 0};
-const uint8_t BRIGHTNESS_LEVELS_INNER_BACK[BRIGHTNESS_CYCLE_LEN] = {30, 60, 90, 90, 0};
+const uint8_t BRIGHTNESS_LEVELS_INNER_FRONT[BRIGHTNESS_CYCLE_LEN] = {20, 80, 150, 0, 0};
+const uint8_t BRIGHTNESS_LEVELS_INNER_BACK[BRIGHTNESS_CYCLE_LEN] = {20, 80, 150, 0, 0};
 
-uint8_t BRIGHTNESS_OUTER = 30;        // Sets the "Low" brightness level for the outer leds
+uint8_t BRIGHTNESS_OUTER = 15;        // Sets the "Low" brightness level for the outer leds
 uint8_t BRIGHTNESS_OUTER_PULSE_HEAD = 80; // Sets the "Low" brightness level for the pulse heads 
 uint8_t BRIGHTNESS_INNER_FRONT = 30;  // Sets the "Low" brightness level for the inner front leds
 uint8_t BRIGHTNESS_INNER_BACK = 30;   // Sets the "Low" brightness level for the inner back leds
@@ -80,6 +80,13 @@ void innerCrossfadeOrangeCyan();
 void innerCrossfadeMagentaTurquoise();
 void innerCrossfadeGoldPink();
 void innerCycle();
+void innerEDMSoundReactive_Rainbow();
+void innerEDMSoundReactive_Cyan();
+void innerEDMSoundReactive_Magenta();
+void innerComplementaryCycle();
+
+
+
 
 
 /*
@@ -107,16 +114,17 @@ PatternList outerPatternList = {
 // add new patterns here
 PatternList innerPatternList = { 
   innerCycle,                     // outerCycle
-  innerCrossfadePalette,          // wispyRainbow
+  innerComplementaryCycle,        // wispyRainbow
   innerCrossfadePalette,          // daylight
   innerCrossfadeRedWhite,         // berlin mode
   innerCrossfadeOrangeCyan,       // cyanMode
   innerCrossfadeMagentaTurquoise, // magentaMode
-  innerCrossfadeGoldPink,         // CHANGE
-  innerCrossfadePalette,          // CHANGE
-  innerCrossfadeRedWhite,         // CHANGE
-  innerCrossfadeGoldPink,         // CHANGE
-  innerCrossfadeGoldPink          // CHANGE
+  innerComplementaryCycle,        // wmTiamat
+  innerComplementaryCycle,        // wmYelmag
+  innerCrossfadePalette,          // sinelonDualEffect
+  innerEDMSoundReactive_Rainbow,  // bpm
+  innerEDMSoundReactive_Rainbow,  // bpmFlood
+  
 }; 
 
 /* 
@@ -198,9 +206,9 @@ void setup() {
   button_2.interval(100); // interval in ms
 
   // Read saved pattern indices
-  outerCurrentPattern = EEPROM.read(EEPROM_ADDR_OUTER);
-  innerCurrentPattern = EEPROM.read(EEPROM_ADDR_INNER);
-  brightnessLevelIndex = EEPROM.read(EEPROM_ADDR_BRIGHTNESS);
+  outerCurrentPattern = 0; //EEPROM.read(EEPROM_ADDR_OUTER);
+  innerCurrentPattern = 0; //EEPROM.read(EEPROM_ADDR_INNER);
+  brightnessLevelIndex = 0; //EEPROM.read(EEPROM_ADDR_BRIGHTNESS);
 
   // Safety bounds check
   if (outerCurrentPattern >= ARRAY_SIZE(outerPatternList)) outerCurrentPattern = 0;
@@ -248,25 +256,33 @@ void outerRainbow() {
   EVERY_N_MILLISECONDS( 20 ) { outerHuePosition++; } 
 }
 
-#define PULSE_DECAY 0.99f // Fade by % each step
+#define PULSE_DECAY 0.50f // Fade by % each step
 // Generic Dual Sine Pulse Pattern
 void dualSinePulsePattern(uint8_t red, uint8_t green, uint8_t blue) {
-  // set outer_led to have a blue
-  fill_solid(leds_outer, leds_outer.len, CRGB(red,green,blue));
-  // set the head
-  leds_outer[outerLEDPosition] = CRGB(red, green, blue) * BRIGHTNESS_OUTER_PULSE_HEAD;
-  // set the opposing head
-  int oppositePos = (outerLEDPosition + leds_outer.len / 2) % leds_outer.len;
-  leds_outer[oppositePos] = CRGB(red, green, blue) * BRIGHTNESS_OUTER_PULSE_HEAD;
-  // move the head 
-  EVERY_N_MILLISECONDS(150) { outerLEDPosition = (outerLEDPosition + 1) % leds_outer.len; }
-  // dim the tail
-  EVERY_N_MILLISECONDS(50) {
-    for (int i = 0; i < leds_outer.len; i++) {
-      leds_outer[i].r = (uint8_t)(leds_outer[i].r * PULSE_DECAY);
-      leds_outer[i].g = (uint8_t)(leds_outer[i].g * PULSE_DECAY);
-      leds_outer[i].b = (uint8_t)(leds_outer[i].b * PULSE_DECAY);
-    }
+// This is a master timer that moves the waves. The number controls the speed.
+  uint8_t master_phase = beat8(15);
+
+  for (int i = 0; i < leds_outer.len; i++) {
+    // Map the LED's physical position to a point on a circle (0-255).
+    uint8_t led_angle = map(i, 0, leds_outer.len, 0, 255);
+
+    // Calculate the brightness from the two opposing waves.
+    uint8_t brightness1 = sin8(led_angle + master_phase);
+    uint8_t brightness2 = sin8(led_angle + master_phase + 128);
+
+    // Take the brighter of the two waves as our base.
+    uint8_t raw_brightness = max(brightness1, brightness2);
+
+    // We "square" the wave by scaling it by itself. This dramatically
+    // increases the contrast by pushing low brightness values much closer to zero.
+    uint8_t contrast_brightness = scale8(raw_brightness, raw_brightness);
+
+    // Apply an easing function for a smooth feel on top of the high contrast.
+    uint8_t eased_brightness = ease8InOutCubic(contrast_brightness);
+
+    // Apply the specified color, scaled by our new, high-contrast brightness.
+    leds_outer[i] = CRGB(red, green, blue);
+    leds_outer[i].nscale8(scale8(eased_brightness, BRIGHTNESS_OUTER));
   }
 }
 
@@ -407,7 +423,7 @@ void sinelonDualEffect() {
 // colored stripes pulsing at a defined Beats-Per-Minute (BPM)
 void bpm() {
   uint8_t BeatsPerMinute = 32;
-  uint8_t beat = beatsin8(BeatsPerMinute, 64, 255);
+  uint8_t beat = beatsin8(BeatsPerMinute, 5, 80);
   for (int i = 0; i < leds_outer.len; i++) {
     uint8_t colorIndex = (outerHuePosition + (i * (256 / leds_outer.len))) % 256;
     leds_outer[i] = ColorFromPalette(myRainbowPalette, colorIndex, beat-1+(i*10), LINEARBLEND);
@@ -417,7 +433,7 @@ void bpm() {
 // All outer leds pulsing at a defined Beats-Per-Minute (BPM)
 void bpmFlood() {
   uint8_t BeatsPerMinute = 32;
-  uint8_t beat = beatsin8(BeatsPerMinute, 64, 255);
+  uint8_t beat = beatsin8(BeatsPerMinute, 5, 80);
   CRGB color = ColorFromPalette(myRainbowPalette, beat, 150);
   fill_solid(leds_outer, leds_outer.len, color);
 }
@@ -632,18 +648,247 @@ void innerCrossfadeGoldPink() {
   innerCrossfadeTwoColorCore(CRGB::Gold, CRGB::DeepPink);
 }
 
+// Complementary Rainbow Cycle
+// Slowly cycles through the rainbow, with the front and back panels
+// always showing complementary colors (180 degrees apart on the color wheel).
+void innerComplementaryCycle() {
+  // --- CONFIGURATION ---
+  // Controls the speed of the color cycle. A higher number means a slower change.
+  const uint8_t CYCLE_SPEED_MS = 50; 
+  
+  // --- SPARKLE CONFIGURATION (UPDATED) ---
+  // How often new sparkles can be triggered. Higher value = more sparkles.
+  const uint8_t SPARKLE_CHANCE = 15;
+  // The brightness of the white sparkles.
+  const uint8_t SPARKLE_BRIGHTNESS = 220;
+  // How long each sparkle lasts in milliseconds to make it perceptible.
+  const uint16_t SPARKLE_DURATION_MS = 80;
+
+  // --- STATE ---
+  // Use a static variable to hold the current hue. It persists between calls.
+  static uint8_t current_hue = 0;
+  EVERY_N_MILLISECONDS(CYCLE_SPEED_MS) { current_hue++; }
+  
+  // --- SPARKLE STATE (NEW) ---
+  static int8_t sparkle_led_index = -1; // Which LED is sparkling (-1 for none)
+  static uint32_t sparkle_start_time = 0; // When the sparkle started
+
+  // --- COLOR CALCULATION ---
+  // The front color is based on the current hue.
+  CRGB front_color = CHSV(current_hue, 255, 255);
+  // The back color is offset by 128, which is 180° on the 0-255 hue scale.
+  CRGB back_color = CHSV(current_hue + 128, 255, 255);
+
+  // --- APPLY BASE COLORS ---
+  // Set the base colors first. Sparkles will be layered on top.
+  fill_solid(leds_inner_front, leds_inner_front.len, front_color);
+  fill_solid(leds_inner_back, leds_inner_back.len, back_color);
+
+  // --- MANAGE SPARKLE EFFECT (UPDATED LOGIC) ---
+  // Check if a sparkle is currently active
+  if (sparkle_led_index != -1) {
+    // If the sparkle's duration has passed, turn it off.
+    if (millis() - sparkle_start_time > SPARKLE_DURATION_MS) {
+      sparkle_led_index = -1;
+    } else {
+      // Otherwise, keep drawing the sparkle on the correct LED.
+      if (sparkle_led_index < 2) {
+        leds_inner_front[sparkle_led_index] = CRGB(SPARKLE_BRIGHTNESS, SPARKLE_BRIGHTNESS, SPARKLE_BRIGHTNESS);
+      } else {
+        leds_inner_back[sparkle_led_index - 2] = CRGB(SPARKLE_BRIGHTNESS, SPARKLE_BRIGHTNESS, SPARKLE_BRIGHTNESS);
+      }
+    }
+  } else {
+    // If no sparkle is active, try to trigger a new one.
+    if (random8() < SPARKLE_CHANCE) {
+      sparkle_led_index = random8(4); // Pick a new LED to sparkle (0-3)
+      sparkle_start_time = millis();  // Record the start time
+      // The sparkle itself will be drawn on the next frame loop.
+    }
+  }
+  
+  // --- APPLY MASTER BRIGHTNESS ---
+  // Scale the final output (both base colors and sparkles) by the master brightness settings.
+  setSegBrightness(leds_inner_front, BRIGHTNESS_INNER_FRONT);
+  setSegBrightness(leds_inner_back, BRIGHTNESS_INNER_BACK);
+}
+
+
+
+
+
+
+
+
+
+
+// This is the new "core" function that accepts a color parameter.
+// It contains all the logic for the animation.
+void innerEDMSoundReactive_core(CRGB base_color) {
+  // --- CORE CONFIGURATION ---
+  const uint8_t BPM = 128;
+
+  // --- RHYTHM CONFIGURATION (BACK PANEL) ---
+  const CRGB KICK_COLOR = CRGB::White;
+  const CRGB SNARE_COLOR = CRGB::Gold;
+  
+  // If the base color is black, treat it as a trigger for a rainbow cycle.
+  // Otherwise, use the provided static color.
+  CRGB hihat_color;
+  if (base_color == CRGB::Black) {
+    static uint8_t hihat_rainbow_hue = 0;
+    EVERY_N_MILLISECONDS(30) { hihat_rainbow_hue++; } // Speed of the rainbow change
+    hihat_color = CHSV(hihat_rainbow_hue, 240, 255);
+  } else {
+    hihat_color = base_color;
+  }
+
+  const uint16_t KICK_DECAY_MS = 150;
+  const uint16_t SNARE_DECAY_MS = 120;
+
+  // --- MELODIC CONFIGURATION (FRONT PANEL) ---
+  static uint8_t synth_hue = 0;
+  const uint8_t SYNTH_PAD_SPEED_DIVISOR = 8;
+
+  // --- STRUCTURE & FX CONFIGURATION ---
+  const uint8_t BUILD_UP_CYCLE = 32;
+  const CRGB BUILD_UP_COLOR = CRGB::Orange;
+  const uint8_t SIDECHAIN_DEPTH = 120;
+  const uint16_t PRE_DROP_SILENCE_MS = 100;
+
+  // --- BEAT TRACKING ---
+  static uint32_t beat_counter = 0;
+  static uint32_t last_beat_time = 0;
+  uint32_t current_time = millis();
+  uint32_t beat_interval = 60000 / BPM;
+
+  bool new_beat = false;
+  if (current_time - last_beat_time >= beat_interval) {
+    new_beat = true;
+    last_beat_time = current_time;
+    beat_counter++;
+  }
+  uint32_t time_since_beat = current_time - last_beat_time;
+
+  // --- KICK DRUM SIMULATION ---
+  uint8_t kick_brightness = 0;
+  if (time_since_beat < KICK_DECAY_MS) {
+    kick_brightness = 255 * exp(-(float)time_since_beat / (KICK_DECAY_MS / 4.0f));
+  }
+
+  // --- SNARE/CLAP SIMULATION ---
+  uint8_t snare_brightness = 0;
+  static uint32_t last_snare_time = 0;
+  if (new_beat && (beat_counter % 2 != 0)) {
+    last_snare_time = current_time;
+  }
+  uint32_t time_since_snare = current_time - last_snare_time;
+  if (time_since_snare < SNARE_DECAY_MS) {
+    snare_brightness = 255 * exp(-(float)time_since_snare / (SNARE_DECAY_MS / 5.0f));
+  }
+
+  // --- HI-HAT SIMULATION ---
+  uint8_t hihat_brightness = 30; // Base brightness to prevent flickering
+  uint8_t sixteen_step = beat16(BPM) % 16;
+  switch (sixteen_step) {
+    case 0:  hihat_brightness = 150; break;
+    case 4:  hihat_brightness = 220; break;
+    case 8:  hihat_brightness = 150; break;
+    case 12: hihat_brightness = 220; break;
+    case 2: case 6: case 10: case 14: hihat_brightness = 80; break;
+  }
+
+  // --- SMOOTH SYNTH PAD SIMULATION ---
+  uint8_t synth_speed = BPM / SYNTH_PAD_SPEED_DIVISOR;
+  uint8_t min_bright = 40;
+  uint8_t max_bright = 200;
+  uint8_t synth_brightness1 = beatsin8(synth_speed, min_bright, max_bright, 0, 0);
+  uint8_t synth_brightness2 = beatsin8(synth_speed, min_bright, max_bright, 0, 128);
+  EVERY_N_MILLISECONDS(40) { synth_hue++; }
+  CRGB synth_color1 = CHSV(synth_hue, 240, 255);
+  CRGB synth_color2 = CHSV(synth_hue + 85, 240, 255);
+
+  // --- BUILD-UP / DROP STRUCTURE ---
+  uint8_t build_phase = beat_counter % BUILD_UP_CYCLE;
+  bool is_in_build = (build_phase >= BUILD_UP_CYCLE - 8);
+  bool is_drop = (build_phase == 0 && beat_counter > 0);
+  bool is_pre_drop = (build_phase == BUILD_UP_CYCLE - 1 && time_since_beat > beat_interval - PRE_DROP_SILENCE_MS);
+  uint8_t roll_brightness = 0;
+  if (is_in_build) {
+    float build_progress = (float)(build_phase - (BUILD_UP_CYCLE - 8)) / 8.0f;
+    uint8_t roll_speed = map(build_progress * 255, 0, 255, 8, 2);
+    if (beat16(BPM) % roll_speed == 0) { roll_brightness = 255; }
+    snare_brightness = max(snare_brightness, roll_brightness);
+    uint8_t filter_amount = map(build_progress * 255, 0, 255, 100, 255);
+    hihat_brightness = scale8(hihat_brightness, filter_amount);
+    uint8_t saturation = map(build_progress * 255, 0, 255, 180, 255);
+    synth_color1.setHSV(synth_hue, saturation, 255);
+    synth_color2.setHSV(synth_hue + 85, saturation, 255);
+  }
+
+  // --- DYNAMIC EFFECTS (FX) ---
+  if (kick_brightness > 100) {
+    uint8_t sidechain_amount = map(kick_brightness, 100, 255, 255 - SIDECHAIN_DEPTH, 255);
+    synth_brightness1 = scale8(synth_brightness1, sidechain_amount);
+    synth_brightness2 = scale8(synth_brightness2, sidechain_amount);
+  }
+
+  // --- FINAL OUTPUT MAPPING ---
+  if (is_drop) {
+    fill_solid(leds_inner_back, 4, CRGB::White);
+    fill_solid(leds_inner_front, 2, CRGB::White);
+    // Apply global brightness to the drop flash
+    setSegBrightness(leds_inner_back, BRIGHTNESS_INNER_BACK);
+    setSegBrightness(leds_inner_front, BRIGHTNESS_INNER_FRONT);
+  } else if (is_pre_drop) {
+    fill_solid(leds_inner_back, 4, CRGB::Black);
+    fill_solid(leds_inner_front, 2, CRGB::Black);
+  } else {
+    // Back Panel - Apply global brightness to each effect
+    leds_inner_back[0] = KICK_COLOR;
+    leds_inner_back[0].nscale8(scale8(kick_brightness, BRIGHTNESS_INNER_BACK));
+    leds_inner_back[1] = hihat_color;
+    leds_inner_back[1].nscale8(scale8(hihat_brightness, BRIGHTNESS_INNER_BACK));
+    leds_inner_back[2] = (roll_brightness > 0) ? BUILD_UP_COLOR : SNARE_COLOR;
+    leds_inner_back[2].nscale8(scale8(snare_brightness, BRIGHTNESS_INNER_BACK));
+    leds_inner_back[3] = CRGB::Black;
+
+    // Front Panel - Apply global brightness to each effect
+    leds_inner_front[0] = synth_color1;
+    leds_inner_front[0].nscale8(scale8(synth_brightness1, BRIGHTNESS_INNER_FRONT));
+    leds_inner_front[1] = synth_color2;
+    leds_inner_front[1].nscale8(scale8(synth_brightness2, BRIGHTNESS_INNER_FRONT));
+  }
+}
+
+// --- WRAPPER FUNCTIONS ---
+// Create one of these for each color you want to use.
+
+void innerEDMSoundReactive_Cyan() {
+  innerEDMSoundReactive_core(CRGB::Cyan);
+}
+
+void innerEDMSoundReactive_Magenta() {
+  innerEDMSoundReactive_core(CRGB::Magenta);
+}
+
+void innerEDMSoundReactive_Rainbow() {
+  innerEDMSoundReactive_core(CRGB::Black);
+}
+
+
 void innerCycle() {
   PatternList innerPatternListCycle = { 
-    innerCrossfadePalette,          // wispyRainbow
+    innerComplementaryCycle,        // wispyRainbow
     innerCrossfadePalette,          // daylight
     innerCrossfadeRedWhite,         // berlin mode
     innerCrossfadeOrangeCyan,       // cyanMode
     innerCrossfadeMagentaTurquoise, // magentaMode
-    innerCrossfadeGoldPink,         // CHANGE
-    innerCrossfadePalette,          // CHANGE
-    innerCrossfadeRedWhite,         // CHANGE
-    innerCrossfadeGoldPink,         // CHANGE
-    innerCrossfadeGoldPink          // CHANGE
+    innerComplementaryCycle,        // wmTiamat
+    innerComplementaryCycle,        // wmYelmag
+    innerCrossfadePalette,          // sinelonDualEffect
+    innerEDMSoundReactive_Rainbow,  // bpm
+    innerEDMSoundReactive_Rainbow,  // bpmFlood
   };
   static uint8_t current = 0;
   static unsigned long lastChangeTime = 0;
