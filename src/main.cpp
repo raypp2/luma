@@ -43,21 +43,20 @@ int outerLEDPosition = 0;        // Marker for point-based animations
 // Patter brightness specific global variables
 uint8_t brightnessLevelIndex = 0;     // Used to iterate through the button 2 brightness level presses
 
-const uint8_t BRIGHTNESS_LEVELS_OUTER[BRIGHTNESS_CYCLE_LEN] = {30, 60, 90, 0, 0};
-const uint8_t BRIGHTNESS_LEVELS_OUTER_PULSE_HEAD[BRIGHTNESS_CYCLE_LEN] = {80, 160, 240, 0, 0};
-const uint8_t BRIGHTNESS_LEVELS_INNER_FRONT[BRIGHTNESS_CYCLE_LEN] = {20, 80, 150, 0, 0};
-const uint8_t BRIGHTNESS_LEVELS_INNER_BACK[BRIGHTNESS_CYCLE_LEN] = {20, 80, 150, 0, 0};
+const uint8_t BRIGHTNESS_LEVELS_OUTER[BRIGHTNESS_CYCLE_LEN] = {20, 40, 60, 0, 0};
+const uint8_t BRIGHTNESS_LEVELS_OUTER_PULSE_HEAD[BRIGHTNESS_CYCLE_LEN] = {25, 50, 75, 0, 0};
+const uint8_t BRIGHTNESS_LEVELS_INNER_FRONT[BRIGHTNESS_CYCLE_LEN] = {10, 20, 30, 30, 0};
+const uint8_t BRIGHTNESS_LEVELS_INNER_BACK[BRIGHTNESS_CYCLE_LEN] = {10, 20, 30, 30, 0};
 
-uint8_t BRIGHTNESS_OUTER = 15;        // Sets the "Low" brightness level for the outer leds
-uint8_t BRIGHTNESS_OUTER_PULSE_HEAD = 80; // Sets the "Low" brightness level for the pulse heads 
-uint8_t BRIGHTNESS_INNER_FRONT = 30;  // Sets the "Low" brightness level for the inner front leds
-uint8_t BRIGHTNESS_INNER_BACK = 30;   // Sets the "Low" brightness level for the inner back leds
+uint8_t BRIGHTNESS_OUTER = BRIGHTNESS_LEVELS_OUTER[0];                       // Sets the "Low" brightness level for the outer leds
+uint8_t BRIGHTNESS_OUTER_PULSE_HEAD = BRIGHTNESS_LEVELS_OUTER_PULSE_HEAD[0]; // Sets the "Low" brightness level for the pulse heads 
+uint8_t BRIGHTNESS_INNER_FRONT = BRIGHTNESS_LEVELS_INNER_FRONT[0];           // Sets the "Low" brightness level for the inner front leds
+uint8_t BRIGHTNESS_INNER_BACK = BRIGHTNESS_LEVELS_INNER_BACK[0];             // Sets the "Low" brightness level for the inner back leds
 
 
 
 // Need to forward declarations for the patterns here -- update with new patterns
 // Outer patterns
-void outerRainbow();
 void wispyRainbow();
 void berlinMode();
 void cyanMode();
@@ -68,12 +67,9 @@ void wmYelmag();
 void sinelonDualEffect();
 void bpm();
 void bpmFlood();
-void outerComet();
 void outerCycle();
 
 // Inner patterns
-void innerBlOnRd();
-void innerDiametricFade();
 void innerCrossfadePalette();
 void innerCrossfadeRedWhite();
 void innerCrossfadeOrangeCyan();
@@ -88,6 +84,17 @@ void innerComplementaryCycle();
 
 
 
+// Currently unused
+void outerComet();
+void outerRainbow();
+void innerBlOnRd();
+void innerDiametricFade();
+
+// Helper functions
+void dualSinePulsePatternStrobe(uint8_t red, uint8_t green, uint8_t blue);
+void dualSinePulsePattern(uint8_t red, uint8_t green, uint8_t blue);
+void fill_rainbow(struct CRGB *targetArray, int numToFill, uint8_t initialhue, uint8_t deltahue, uint8_t sat, uint8_t val);
+void washingMachineEffect(CRGBPalette16 palette);
 
 /*
  * List of patterns to cycle through on button press.  Each is defined as a separate function below.
@@ -100,7 +107,7 @@ typedef void (*PatternList[])();
 PatternList outerPatternList = {
   outerCycle,
   wispyRainbow,
-  daylight,  
+  daylight,
   berlinMode, 
   cyanMode, 
   magentaMode, 
@@ -256,10 +263,30 @@ void outerRainbow() {
   EVERY_N_MILLISECONDS( 20 ) { outerHuePosition++; } 
 }
 
-#define PULSE_DECAY 0.50f // Fade by % each step
-// Generic Dual Sine Pulse Pattern
+#define PULSE_DECAY 0.85f // Fade by % each step
+// Generic Dual Sine Pulse Pattern - More bright and "strobe-y"
+void dualSinePulsePatternStrobe(uint8_t red, uint8_t green, uint8_t blue) {
+  // set outer_led to have a blue
+  fill_solid(leds_outer, leds_outer.len, CRGB(red,green,blue));
+  // set the head
+  leds_outer[outerLEDPosition] = CRGB(red, green, blue) * BRIGHTNESS_OUTER_PULSE_HEAD;
+  // set the opposing head
+  int oppositePos = (outerLEDPosition + leds_outer.len / 2) % leds_outer.len;
+  leds_outer[oppositePos] = CRGB(red, green, blue) * BRIGHTNESS_OUTER_PULSE_HEAD;
+  // move the head 
+  EVERY_N_MILLISECONDS(150) { outerLEDPosition = (outerLEDPosition + 1) % leds_outer.len; }
+  // dim the tail
+  EVERY_N_MILLISECONDS(50) {
+    for (int i = 0; i < leds_outer.len; i++) {
+      leds_outer[i].r = (uint8_t)(leds_outer[i].r * PULSE_DECAY);
+      leds_outer[i].g = (uint8_t)(leds_outer[i].g * PULSE_DECAY);
+      leds_outer[i].b = (uint8_t)(leds_outer[i].b * PULSE_DECAY);
+    }
+  }
+}
+
 void dualSinePulsePattern(uint8_t red, uint8_t green, uint8_t blue) {
-// This is a master timer that moves the waves. The number controls the speed.
+  // This is a master timer that moves the waves. The number controls the speed.
   uint8_t master_phase = beat8(15);
 
   for (int i = 0; i < leds_outer.len; i++) {
@@ -269,7 +296,6 @@ void dualSinePulsePattern(uint8_t red, uint8_t green, uint8_t blue) {
     // Calculate the brightness from the two opposing waves.
     uint8_t brightness1 = sin8(led_angle + master_phase);
     uint8_t brightness2 = sin8(led_angle + master_phase + 128);
-
     // Take the brighter of the two waves as our base.
     uint8_t raw_brightness = max(brightness1, brightness2);
 
@@ -311,11 +337,11 @@ void wispyRainbow() {
   EVERY_N_MILLISECONDS( 20 ) { outerHuePosition++; }
 
   // set the head
-  leds_outer[outerLEDPosition] = leds_outer[outerLEDPosition] * BRIGHTNESS_OUTER_PULSE_HEAD;
+  leds_outer[outerLEDPosition] = leds_outer[outerLEDPosition].nscale8_video(BRIGHTNESS_OUTER_PULSE_HEAD);
 
   // set the opposing head
   int oppositePos = (outerLEDPosition + leds_outer.len / 2) % leds_outer.len;
-  leds_outer[oppositePos] = leds_outer[oppositePos] * BRIGHTNESS_OUTER_PULSE_HEAD;
+  leds_outer[oppositePos] = leds_outer[oppositePos].nscale8_video(BRIGHTNESS_OUTER_PULSE_HEAD);
 
    // move the head with dynamic movement speed using a sine wave
   static uint16_t lastMoveTime = 0;
@@ -340,19 +366,19 @@ void wispyRainbow() {
 }
 
 void daylight() {
-  dualSinePulsePattern(10, 10, 10);
+  dualSinePulsePattern(BRIGHTNESS_OUTER, BRIGHTNESS_OUTER, BRIGHTNESS_OUTER);
 }
 
 void berlinMode() {
-  dualSinePulsePattern(10, 0, 0);
+  dualSinePulsePattern(BRIGHTNESS_OUTER, 0, 0);
 }
 
 void cyanMode() {
-  dualSinePulsePattern(0, 10, 10);
+  dualSinePulsePattern(0, BRIGHTNESS_OUTER, BRIGHTNESS_OUTER);
 }
 
 void magentaMode() {
-  dualSinePulsePattern(10, 0, 10);
+  dualSinePulsePattern(BRIGHTNESS_OUTER, 0, BRIGHTNESS_OUTER);
 }
 
 // Imitates a washing machine, rotating same waves forward,
@@ -423,7 +449,7 @@ void sinelonDualEffect() {
 // colored stripes pulsing at a defined Beats-Per-Minute (BPM)
 void bpm() {
   uint8_t BeatsPerMinute = 32;
-  uint8_t beat = beatsin8(BeatsPerMinute, 5, 80);
+  uint8_t beat = beatsin8(BeatsPerMinute, 32, 128);
   for (int i = 0; i < leds_outer.len; i++) {
     uint8_t colorIndex = (outerHuePosition + (i * (256 / leds_outer.len))) % 256;
     leds_outer[i] = ColorFromPalette(myRainbowPalette, colorIndex, beat-1+(i*10), LINEARBLEND);
@@ -433,8 +459,8 @@ void bpm() {
 // All outer leds pulsing at a defined Beats-Per-Minute (BPM)
 void bpmFlood() {
   uint8_t BeatsPerMinute = 32;
-  uint8_t beat = beatsin8(BeatsPerMinute, 5, 80);
-  CRGB color = ColorFromPalette(myRainbowPalette, beat, 150);
+  uint8_t beat = beatsin8(BeatsPerMinute, 32, 128);
+  CRGB color = ColorFromPalette(myRainbowPalette, beat, 110);
   fill_solid(leds_outer, leds_outer.len, color);
 }
 
