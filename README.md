@@ -12,3 +12,9 @@
 ## 🙋‍♂️ Who is this for
 
 Something about who this is for, what it does, and why it is useful.
+
+## TODO
+
+[] Apply google analytics
+[] Write basic documentation on Github
+[] Update team to instagram tags
